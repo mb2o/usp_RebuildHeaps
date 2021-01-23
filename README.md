@@ -39,7 +39,7 @@ None
 
 ## USAGE     
 
-```
+``` sql
 EXEC dbo.usp_RebuildHeaps @DatabaseName = 'HIX_PRODUCTIE', @DryRun = 0;
 ```
 
