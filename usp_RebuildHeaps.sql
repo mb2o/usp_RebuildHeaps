@@ -114,7 +114,7 @@ BEGIN
             page_count             BIGINT  NOT NULL,
             record_count           BIGINT  NOT NULL,
             forwarded_record_count BIGINT  NOT NULL,
-            rebuild_online         TINYINT
+            rebuild_online         TINYINT NOT NULL
         );
 
         DECLARE heapdb CURSOR STATIC FOR
