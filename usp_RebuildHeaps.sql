@@ -216,9 +216,8 @@ BEGIN
                                     forwarded_record_count,
                                     rebuild_online
     FROM dbo.FragmentedHeaps
-    WHERE 1 = 1
-            AND ((@RebuildOnlineOnly = 0) OR (rebuild_online = 1))
-            AND ((@MaxRowCount IS NULL) OR (record_count <= @MaxRowCount))
+    WHERE ((@RebuildOnlineOnly = 0) OR (rebuild_online = 1))
+          AND ((@MaxRowCount IS NULL) OR (record_count <= @MaxRowCount))
     ORDER BY forwarded_record_count DESC;
 
     OPEN worklist;
