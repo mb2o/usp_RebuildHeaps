@@ -1,5 +1,5 @@
 # usp_RebuildHeaps
- 
+
 ## SYNOPSIS    
 A heap is a table without a clustered index. This proc can be used to rebuild those heaps on a database. Thereby alleviating the problems that arise from large numbers of forwarding records on a heap.
 
@@ -26,27 +26,23 @@ None
 
 `@MinNumberOfPages` specifies the minimum number of pages required on the heap to be taken into account
 
-`@ProcessHeapCount` specifies the number of heaps that should be rebuilt. Processing large heaps can have a negative effect on the performance of your system. Also be aware that your logshipping processes can be greatly affected by rebuilding heaps as all changes need to be replicated.
+`@ProcessHeapCount` specifies the number of heaps that should be rebuilt. Processing large heaps can have a negative effect on the performance of your system. Also be aware that your log shipping processes can be greatly affected by rebuilding heaps as all changes need to be replicated.
 					
 `@RebuildOnlineOnly` specifies whether you only want to consider heaps that can be rebuilt online
 
 `@MaxRowCount` specifies the number of rows that should not be exceeded for heaps you wish to rebuild
 
+`@RebuildTable` should be set to 1 when the worktable has to be rebuilt, e.g. after an update to the stored procedure when fields have changed
+
 `@DryRun` specifies whether the actual query should be executed or just printed to the screen
 	
+
 ## NOTES
 
 
 ## USAGE     
 
 ``` sql
-EXEC dbo.usp_RebuildHeaps @DatabaseName = 'HIX_PRODUCTIE', @DryRun = 0;
+EXEC dbo.usp_RebuildHeaps @DatabaseName = 'HIX_PROD', @DryRun = 0;
 ```
 
-## HISTORY
-
-DATE       VERSION     AUTHOR               DESCRIPTION
-========   =========   ==================   ======================================
-20200103   1.0         Mark Boomaars		Open Sourced on GitHub
-20200831   1.1         Mark Boomaars        Changes to logic and logging
-20210122   1.2		   Mark Boomaars		Rebuild online when possible (Michiel vd Boogaard)
