@@ -21,13 +21,16 @@
                     affected by rebuilding heaps as all changes need to be replicated.
 					
 					@RebuildOnlineOnly specifies whether you only want to consider heaps that can
-					be rebuilt online
+					be rebuilt online.
 
 					@MaxRowCount specifies the number of rows that should not be exceeded for heaps
-					you wish to rebuild
+					you wish to rebuild.
+
+                    @RebuildTable should be set to 1 when the worktable has to be rebuilt,
+                    e.g. after an update to the stored procedure when fields have changed.
 
                     @DryRun specifies whether the actual query should be executed or just 
-                    printed to the screen
+                    printed to the screen.
 	
 	NOTES:			
 
@@ -49,13 +52,13 @@ IF OBJECTPROPERTY (OBJECT_ID ('usp_RebuildHeaps'), 'IsProcedure') = 1
     DROP PROCEDURE dbo.usp_RebuildHeaps;
 GO
 
-CREATE PROC dbo.usp_RebuildHeaps
-    @DatabaseName      NVARCHAR(100),
-    @MinNumberOfPages  INT     = 0,
-    @ProcessHeapCount  INT     = 2,
-    @RebuildOnlineOnly TINYINT = 0,
-    @MaxRowCount       BIGINT  = NULL,
-    @DryRun            TINYINT = 1
+CREATE PROC dbo.usp_RebuildHeaps @DatabaseName      NVARCHAR(100),
+                                 @MinNumberOfPages  INT     = 0,
+                                 @ProcessHeapCount  INT     = 2,
+                                 @RebuildOnlineOnly TINYINT = 0,
+                                 @MaxRowCount       BIGINT  = NULL,
+                                 @RebuildTable      BIT     = 1,
+                                 @DryRun            BIT     = 1
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -65,9 +68,9 @@ BEGIN
     DECLARE @db_id                  INT,
             @db_name                sysname       = @DatabaseName,
             @object_id              INT,
-            @rebuild_online         TINYINT,
+            @rebuild_online         BIT,
             @edition                VARCHAR(100),
-            @is_enterprise          TINYINT,
+            @is_enterprise          BIT,
             @schema_name            sysname,
             @table_name             sysname,
             @page_count             BIGINT,
@@ -100,9 +103,18 @@ BEGIN
         GOTO Logging;
     END;
 
+    -- If working table should be rebuilt, drop it
+    IF OBJECT_ID (N'FragmentedHeaps', N'U') IS NOT NULL
+       AND @RebuildTable = 1
+    BEGIN
+        DROP TABLE dbo.FragmentedHeaps;
+        RAISERROR ('Current working table dropped', 10, 1) WITH NOWAIT;
+    END
+
     -------------------------------------------------------------------------------
     -- Preparing our working table
     -------------------------------------------------------------------------------
+
     IF OBJECT_ID (N'FragmentedHeaps', N'U') IS NULL
     BEGIN
         RAISERROR ('Preparing our working table', 10, 1) WITH NOWAIT;
@@ -114,14 +126,14 @@ BEGIN
             page_count             BIGINT  NOT NULL,
             record_count           BIGINT  NOT NULL,
             forwarded_record_count BIGINT  NOT NULL,
-            rebuild_online         TINYINT NOT NULL
+            rebuild_online         BIT     NOT NULL
         );
 
         DECLARE heapdb CURSOR STATIC FOR
-            SELECT d.database_id,
-                   d.name
-            FROM sys.databases AS d
-            WHERE d.name = @db_name;
+        SELECT d.database_id,
+               d.name
+        FROM sys.databases AS d
+        WHERE d.name = @db_name;
 
         OPEN heapdb;
 
@@ -136,19 +148,18 @@ BEGIN
             -- Loop through all heaps
             RAISERROR ('Looping through all heaps', 10, 1) WITH NOWAIT;
 
-            SET @sql
-                = N'DECLARE heaps CURSOR GLOBAL STATIC FOR
+            SET @sql = N'DECLARE heaps CURSOR GLOBAL STATIC FOR
 					SELECT i.object_id,
 						   ISNUMERIC (u.object_id)
 					FROM ' + QUOTENAME (@db_name) + N'.sys.indexes AS i
 					INNER JOIN ' + QUOTENAME (@db_name)
-                  + N'.sys.objects AS o
+                       + N'.sys.objects AS o
 						ON o.object_id = i.object_id
 					LEFT OUTER JOIN ' + QUOTENAME (@db_name)
-                  + N'.sys.indexes AS j
+                       + N'.sys.indexes AS j
 						ON j.object_id = i.object_id AND i.type_desc = ''HEAP''
 					LEFT OUTER JOIN ' + QUOTENAME (@db_name)
-                  + N'.sys.columns AS u
+                       + N'.sys.columns AS u
 						ON u.object_id = j.object_id AND ((u.system_type_id IN (34, 35, 99, 241, 240)) OR (u.system_type_id IN (167, 231, 165) AND max_length = -1))
 					WHERE i.type_desc = ''HEAP'' AND o.type_desc = ''USER_TABLE''
 					GROUP BY i.object_id, u.object_id;';
@@ -169,15 +180,13 @@ BEGIN
                 SET @schema_name = OBJECT_SCHEMA_NAME (@object_id, @db_id);
                 SET @table_name = OBJECT_NAME (@object_id, @db_id);
 
-                INSERT INTO dbo.FragmentedHeaps (
-                    object_id,
-                    schema_name,
-                    table_name,
-                    page_count,
-                    record_count,
-                    forwarded_record_count,
-                    rebuild_online
-                )
+                INSERT INTO dbo.FragmentedHeaps (object_id,
+                                                 schema_name,
+                                                 table_name,
+                                                 page_count,
+                                                 record_count,
+                                                 forwarded_record_count,
+                                                 rebuild_online)
                 SELECT P.object_id,
                        @schema_name,
                        @table_name,
@@ -190,18 +199,17 @@ BEGIN
                       AND P.forwarded_record_count > 0;
 
                 -- Log tablename
-                SET @msg
-                    = CONCAT (
-                          'Added table [',
-                          @schema_name,
-                          '].[',
-                          @table_name,
-                          '] to worklist (',
-                          @i,
-                          ' of ',
-                          @@CURSOR_ROWS,
-                          ')'
-                      );
+                SET @msg = CONCAT (
+                               'Added table [',
+                               @schema_name,
+                               '].[',
+                               @table_name,
+                               '] to worklist (',
+                               @i,
+                               ' of ',
+                               @@CURSOR_ROWS,
+                               ')'
+                           );
                 RAISERROR (@msg, 10, 1) WITH NOWAIT;
             END;
 
@@ -216,6 +224,7 @@ BEGIN
     -------------------------------------------------------------------------------
     -- Starting actual hard work
     -------------------------------------------------------------------------------
+
     IF @DryRun = 1
         RAISERROR ('Performing a dry run. Nothing will be executed ...', 10, 1) WITH NOWAIT;
 
@@ -226,17 +235,16 @@ BEGIN
     WHERE d.name = @db_name;
 
     DECLARE worklist CURSOR STATIC FOR
-        SELECT TOP (@ProcessHeapCount)
-               object_id,
-               page_count,
-               record_count,
-               forwarded_record_count,
-               rebuild_online
-        FROM dbo.FragmentedHeaps
-        WHERE 1 = 1
-              AND ((@RebuildOnlineOnly = 0) OR (rebuild_online = 1))
-              AND ((@MaxRowCount IS NULL) OR (record_count <= @MaxRowCount))
-        ORDER BY forwarded_record_count DESC;
+    SELECT TOP (@ProcessHeapCount) object_id,
+                                   page_count,
+                                   record_count,
+                                   forwarded_record_count,
+                                   rebuild_online
+    FROM dbo.FragmentedHeaps
+    WHERE 1 = 1
+          AND ((@RebuildOnlineOnly = 0) OR (rebuild_online = 1))
+          AND ((@MaxRowCount IS NULL) OR (record_count <= @MaxRowCount))
+    ORDER BY forwarded_record_count DESC;
 
     OPEN worklist;
 
@@ -253,24 +261,22 @@ BEGIN
 
         SET @schema_name = OBJECT_SCHEMA_NAME (@object_id, @db_id);
         SET @table_name = OBJECT_NAME (@object_id, @db_id);
-        SET @msg
-            = CONCAT (
-                  'Rebuilding [',
-                  @db_name,
-                  '].[',
-                  @schema_name,
-                  '].[',
-                  @table_name,
-                  '] because of ',
-                  @forwarded_record_count,
-                  ' forwarded records.'
-              );
+        SET @msg = CONCAT (
+                       'Rebuilding [',
+                       @db_name,
+                       '].[',
+                       @schema_name,
+                       '].[',
+                       @table_name,
+                       '] because of ',
+                       @forwarded_record_count,
+                       ' forwarded records.'
+                   );
 
         RAISERROR (@msg, 10, 1) WITH NOWAIT;
 
-        SET @sql
-            = N'ALTER TABLE ' + QUOTENAME (@db_name) + N'.' + QUOTENAME (@schema_name) + N'.' + QUOTENAME (@table_name)
-              + N' REBUILD';
+        SET @sql = N'ALTER TABLE ' + QUOTENAME (@db_name) + N'.' + QUOTENAME (@schema_name) + N'.'
+                   + QUOTENAME (@table_name) + N' REBUILD';
 
         IF @rebuild_online = 1
            AND @is_enterprise = 1
@@ -283,7 +289,8 @@ BEGIN
         -- Remove processed heap from working table
         IF @DryRun = 0
         BEGIN
-            DELETE FROM dbo.FragmentedHeaps WHERE object_id = @object_id;
+            DELETE FROM dbo.FragmentedHeaps
+            WHERE object_id = @object_id;
 
             RAISERROR ('Removing heap from working table', 10, 1) WITH NOWAIT;
         END;
@@ -296,12 +303,13 @@ BEGIN
     IF @DryRun = 0
     BEGIN
         DECLARE @rows INT = 0;
-        SELECT @rows = COUNT (*) FROM dbo.FragmentedHeaps;
+        SELECT @rows = COUNT (*)
+        FROM dbo.FragmentedHeaps;
 
         IF @rows = 0
         BEGIN
             DROP TABLE dbo.FragmentedHeaps;
-            RAISERROR ('No rows in table. Cleaning up...', 10, 1) WITH NOWAIT;
+            RAISERROR ('No outstanding work. Cleaning up...', 10, 1) WITH NOWAIT;
         END;
     END;
 
