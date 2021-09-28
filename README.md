@@ -32,6 +32,8 @@ None
 
 `@MaxRowCount` specifies the number of rows that should not be exceeded for heaps you wish to rebuild
 
+`@MaxDOP` specifies maximum degree of paralellism
+
 `@RebuildTable` should be set to 1 when the worktable has to be rebuilt, e.g. after an update to the stored procedure when fields have changed
 
 `@DryRun` specifies whether the actual query should be executed or just printed to the screen
@@ -43,6 +45,6 @@ None
 ## USAGE     
 
 ``` sql
-EXEC dbo.usp_RebuildHeaps @DatabaseName = 'HIX_PROD', @DryRun = 0;
+EXEC dbo.usp_RebuildHeaps @DatabaseName = 'HIX_PROD', @MaxDOP = 2, @DryRun = 0;
 ```
 
