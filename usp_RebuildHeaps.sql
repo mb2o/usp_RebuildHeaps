@@ -25,6 +25,8 @@
 
 					@MaxRowCount specifies the number of rows that should not be exceeded for heaps
 					you wish to rebuild.
+					
+					@MaxDOP specifies maximum degree of paralellism
 
                     @RebuildTable should be set to 1 when the worktable has to be rebuilt,
                     e.g. after an update to the stored procedure when fields have changed.
@@ -36,14 +38,15 @@
 
     AUTHOR:         Mark Boomaars, http://www.bravisziekenhuis.nl
     
-    CREATED:        2020-01-03
+    CREATED:        2021-09-29
     
-    VERSION:        1.2
+    VERSION:        1.3
 
     LICENSE:        MIT
     
     USAGE:          EXEC dbo.usp_RebuildHeaps
-                        @DatabaseName = 'HIX_PRODUCTIE', 
+                        @DatabaseName = 'HIX_PRODUCTIE',
+						@MaxDOP = 2,
 						@DryRun = 0;
 
 *********************************************************************************************************/
@@ -57,6 +60,7 @@ CREATE PROC dbo.usp_RebuildHeaps @DatabaseName      NVARCHAR(100),
                                  @ProcessHeapCount  INT     = 2,
                                  @RebuildOnlineOnly TINYINT = 0,
                                  @MaxRowCount       BIGINT  = NULL,
+								 @MaxDOP            INT     = 1,
                                  @RebuildTable      BIT     = 1,
                                  @DryRun            BIT     = 1
 AS
@@ -276,11 +280,10 @@ BEGIN
         RAISERROR (@msg, 10, 1) WITH NOWAIT;
 
         SET @sql = N'ALTER TABLE ' + QUOTENAME (@db_name) + N'.' + QUOTENAME (@schema_name) + N'.'
-                   + QUOTENAME (@table_name) + N' REBUILD';
+                   + QUOTENAME (@table_name) + N' REBUILD WITH (MAXDOP = ' + @MaxDOP + N')';
 
-        IF @rebuild_online = 1
-           AND @is_enterprise = 1
-            SET @sql += N' WITH (ONLINE = ON);';
+        IF @rebuild_online = 1 AND @is_enterprise = 1
+            SET @sql += N' WITH (ONLINE = ON, MAXDOP = ' + @MaxDOP + N');';
 
         IF @DryRun = 0 EXECUTE sp_executesql @stmt = @sql;
 
