@@ -12,7 +12,11 @@
                     @DatabaseName specifies on which database the heaps should be rebuilt.
                     
                     Optional:
-                    @MinNumberOfPages specifies the minimum number of pages required on the heap
+                    @SchemaName specifies the schema of a specific table you want to target
+
+					@TableName specifies the name of a specific table you want to target
+					
+					@MinNumberOfPages specifies the minimum number of pages required on the heap
                     to be taken into account
 
                     @ProcessHeapCount specifies the number of heaps that should be rebuilt. 
@@ -26,7 +30,7 @@
 					@MaxDOP specifies maximum degree of paralellism
 
                     @RebuildTable should be set to 1 when the worktable has to be rebuilt,
-                    e.g. after an update to the stored procedure when fields have changed.
+					e.g. after an update to the stored procedure when fields have changed.
 
                     @DryRun specifies whether the actual query should be executed or just 
                     printed to the screen.
@@ -42,7 +46,7 @@
     LICENSE:        MIT
     
     USAGE:          EXEC dbo.usp_RebuildHeaps
-                        @DatabaseName = 'HIX_PRODUCTIE',
+                        @DatabaseName = 'StackOverflow',
 						@MaxDOP = 2,
 						@DryRun = 0;
 
@@ -52,13 +56,15 @@ IF OBJECTPROPERTY (OBJECT_ID ('usp_RebuildHeaps'), 'IsProcedure') = 1
     DROP PROCEDURE dbo.usp_RebuildHeaps;
 GO
 
-CREATE PROC dbo.usp_RebuildHeaps @DatabaseName      NVARCHAR(100),
-                                 @MinNumberOfPages  INT     = 0,
-                                 @ProcessHeapCount  INT     = 2,
-                                 @MaxRowCount       BIGINT  = NULL,
-								 @MaxDOP            INT     = NULL,
-                                 @RebuildTable      BIT     = 1,
-                                 @DryRun            BIT     = 1
+CREATE PROC dbo.usp_RebuildHeaps @DatabaseName     NVARCHAR(100),
+                                 @SchemaName       NVARCHAR(100) = NULL,
+                                 @TableName        NVARCHAR(100) = NULL,
+                                 @MinNumberOfPages INT           = 0,
+                                 @ProcessHeapCount INT           = 2,
+                                 @MaxRowCount      BIGINT        = NULL,
+                                 @MaxDOP           INT           = NULL,
+                                 @RebuildTable     BIT           = 0,
+                                 @DryRun           BIT           = 1
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -74,11 +80,11 @@ BEGIN
             @record_count           BIGINT,
             @i                      INT           = 0,
             @forwarded_record_count BIGINT,
-			@_maxdop				INT,
+            @_maxdop                INT,
             @sql                    NVARCHAR(MAX),
             @msg                    NVARCHAR(MAX),
-			@_starttime				DATETIME,
-			@_endtime				DATETIME,
+            @_starttime             DATETIME,
+            @_endtime               DATETIME,
             @EndMessage             NVARCHAR(MAX),
             @ErrorMessage           NVARCHAR(MAX),
             @EmptyLine              NVARCHAR(MAX) = CHAR (9),
@@ -94,8 +100,7 @@ BEGIN
     END;
 
     SELECT @edition = CAST(SERVERPROPERTY ('Edition') AS NVARCHAR(100));
-    IF @edition LIKE 'Enterprise%' 
-		SET @is_enterprise = 1;
+    IF @edition LIKE 'Enterprise%' SET @is_enterprise = 1;
 
     IF @Error <> 0
     BEGIN
@@ -109,7 +114,7 @@ BEGIN
     BEGIN
         DROP TABLE dbo.FragmentedHeaps;
         RAISERROR ('Current working table dropped', 10, 1) WITH NOWAIT;
-    END
+    END;
 
     -------------------------------------------------------------------------------
     -- Preparing our working table
@@ -162,7 +167,7 @@ BEGIN
 					WHERE i.type_desc = ''HEAP'' AND o.type_desc = ''USER_TABLE''
 					GROUP BY i.object_id, u.object_id;';
 
-            EXECUTE sp_executesql @sql;
+            EXECUTE sys.sp_executesql @stmt = @sql;
 
             OPEN heaps;
 
@@ -195,8 +200,8 @@ BEGIN
 
                 -- Log tablename
                 SET @msg = CONCAT (
-								FORMAT(getdate(),'yyyy-MM-dd HH:mm:ss'),
-								': ',
+                               FORMAT (GETDATE (), 'yyyy-MM-dd HH:mm:ss'),
+                               ': ',
                                'processed table [',
                                @schema_name,
                                '].[',
@@ -223,102 +228,139 @@ BEGIN
     -- Starting actual hard work
     -------------------------------------------------------------------------------
 
-	-- Determine configured instance value for MaxDOP
-	SELECT @_maxdop = CONVERT(INT, value_in_use)
-	FROM sys.configurations
-	WHERE name = 'max degree of parallelism';
+    -- Determine configured instance value for MaxDOP
+    SELECT @_maxdop = CONVERT (INT, value_in_use)
+    FROM sys.configurations
+    WHERE name = 'max degree of parallelism';
 
-	-- If @MaxDOP has not been specified, use instance value
-	-- Else use specified value
-	IF @MaxDOP IS NOT NULL
-		SET @_maxdop = @MaxDOP;
-	
-	-- Are we dealing with a dry run?
+    -- If @MaxDOP has not been specified, use instance value
+    -- Else use specified value
+    IF @MaxDOP IS NOT NULL SET @_maxdop = @MaxDOP;
+
+    -- Are we dealing with a dry run?
     IF @DryRun = 1
         RAISERROR ('Performing a dry run. Nothing will be executed ...', 10, 1) WITH NOWAIT;
 
     RAISERROR ('Starting actual hard work', 10, 1) WITH NOWAIT;
 
-    SELECT @db_id = d.database_id
-    FROM sys.databases AS d
-    WHERE d.name = @db_name;
-
-    DECLARE worklist CURSOR STATIC FOR
-    SELECT TOP (@ProcessHeapCount) object_id,
-                                   page_count,
-                                   record_count,
-                                   forwarded_record_count
-    FROM dbo.FragmentedHeaps
-    WHERE 1 = 1
-          AND ((@MaxRowCount IS NULL) OR (record_count <= @MaxRowCount))
-    ORDER BY forwarded_record_count DESC;
-
-    OPEN worklist;
-
-    WHILE 1 = 1
+    -- Are we dealing with a targeted rebuild?
+    IF @SchemaName IS NOT NULL
+       AND @TableName IS NOT NULL
     BEGIN
-        FETCH NEXT FROM worklist
-        INTO @object_id,
-             @page_count,
-             @record_count,
-             @forwarded_record_count;
+        SET @sql = N'ALTER TABLE ' + QUOTENAME (@db_name) + N'.' + QUOTENAME (@SchemaName) + N'.'
+                   + QUOTENAME (@TableName) + N' REBUILD';
 
-        IF @@FETCH_STATUS <> 0 BREAK;
+        IF @is_enterprise = 1
+            SET @sql += N' WITH (ONLINE = ON, MAXDOP = ' + CONVERT (NVARCHAR(1), @_maxdop) + N')';
+        ELSE
+            SET @sql += N' WITH (MAXDOP = ' + CONVERT (NVARCHAR(1), @_maxdop) + N');';
 
-        SET @schema_name = OBJECT_SCHEMA_NAME (@object_id, @db_id);
-        SET @table_name = OBJECT_NAME (@object_id, @db_id);
-        SET @msg = CONCAT (
-					   FORMAT(getdate(),'yyyy-MM-dd HH:mm:ss'),
-					   ': ', 
-                       'rebuilding [',
-                       @db_name,
-                       '].[',
-                       @schema_name,
-                       '].[',
-                       @table_name,
-                       '] because of ',
-                       @forwarded_record_count,
-                       ' forwarded records.'
-                   );
-
-        RAISERROR (@msg, 10, 1) WITH NOWAIT;
-
-		SET @sql = N'ALTER TABLE ' + QUOTENAME (@db_name) + N'.' + QUOTENAME (@schema_name) + N'.' + QUOTENAME (@table_name) + N' REBUILD'
-
-		IF @is_enterprise = 1
-			SET @sql += N' WITH (ONLINE = ON, MAXDOP = ' + CONVERT(NVARCHAR(1), @_maxdop) + N')';
-		ELSE
-            SET @sql += N' WITH (MAXDOP = ' + CONVERT(NVARCHAR(1), @_maxdop) + N');';
-
-        IF @DryRun = 0 
-		BEGIN
-		    SET @_starttime = GETDATE();
-			EXECUTE sys.sp_executesql @stmt = @sql;
-			SET @_endtime = GETDATE();
-
-			-- Determine duration
-			SET @sql += CONCAT (
-					   ' (executed in ', 
-                       CONVERT(VARCHAR(5), DATEDIFF(SECOND, @_starttime, @_endtime)),
-					   ' seconds)'
-                   );
-		END
-
-		-- Log executed action and its duration
-        RAISERROR (@sql, 10, 1) WITH NOWAIT;
-
-        -- Remove processed heap from working table
         IF @DryRun = 0
         BEGIN
+            SET @_starttime = GETDATE ();
+            EXECUTE sys.sp_executesql @stmt = @sql;
+            SET @_endtime = GETDATE ();
+
+            -- Determine duration
+            SET @sql += CONCAT (
+                            ' (executed in ',
+                            CONVERT (VARCHAR(5), DATEDIFF (SECOND, @_starttime, @_endtime)),
+                            ' seconds)'
+                        );
+			
+			-- Remove this table from the working table
             DELETE FROM dbo.FragmentedHeaps
-            WHERE object_id = @object_id;
-
-            RAISERROR ('Removing heap from working table', 10, 1) WITH NOWAIT;
+            WHERE schema_name = @SchemaName
+                  AND table_name = @TableName;
         END;
-    END;
 
-    CLOSE worklist;
-    DEALLOCATE worklist;
+        -- Log executed action and its duration
+        RAISERROR (@sql, 10, 1) WITH NOWAIT;
+    END;
+    ELSE -- We are not dealing with a targeted rebuild, so start working with the FragmentedHeaps table
+    BEGIN
+        SELECT @db_id = d.database_id
+        FROM sys.databases AS d
+        WHERE d.name = @db_name;
+
+        DECLARE worklist CURSOR STATIC FOR
+        SELECT TOP (@ProcessHeapCount) object_id,
+                                       page_count,
+                                       record_count,
+                                       forwarded_record_count
+        FROM dbo.FragmentedHeaps
+        WHERE 1 = 1
+              AND ((@MaxRowCount IS NULL) OR (record_count <= @MaxRowCount))
+        ORDER BY forwarded_record_count DESC;
+
+        OPEN worklist;
+
+        WHILE 1 = 1
+        BEGIN
+            FETCH NEXT FROM worklist
+            INTO @object_id,
+                 @page_count,
+                 @record_count,
+                 @forwarded_record_count;
+
+            IF @@FETCH_STATUS <> 0 BREAK;
+
+            SET @schema_name = OBJECT_SCHEMA_NAME (@object_id, @db_id);
+            SET @table_name = OBJECT_NAME (@object_id, @db_id);
+            SET @msg = CONCAT (
+                           FORMAT (GETDATE (), 'yyyy-MM-dd HH:mm:ss'),
+                           ': ',
+                           'rebuilding [',
+                           @db_name,
+                           '].[',
+                           @schema_name,
+                           '].[',
+                           @table_name,
+                           '] because of ',
+                           @forwarded_record_count,
+                           ' forwarded records.'
+                       );
+
+            RAISERROR (@msg, 10, 1) WITH NOWAIT;
+
+            SET @sql = N'ALTER TABLE ' + QUOTENAME (@db_name) + N'.' + QUOTENAME (@schema_name) + N'.'
+                       + QUOTENAME (@table_name) + N' REBUILD';
+
+            IF @is_enterprise = 1
+                SET @sql += N' WITH (ONLINE = ON, MAXDOP = ' + CONVERT (NVARCHAR(1), @_maxdop) + N')';
+            ELSE
+                SET @sql += N' WITH (MAXDOP = ' + CONVERT (NVARCHAR(1), @_maxdop) + N');';
+
+            IF @DryRun = 0
+            BEGIN
+                SET @_starttime = GETDATE ();
+                EXECUTE sys.sp_executesql @stmt = @sql;
+                SET @_endtime = GETDATE ();
+
+                -- Determine duration
+                SET @sql += CONCAT (
+                                ' (executed in ',
+                                CONVERT (VARCHAR(5), DATEDIFF (SECOND, @_starttime, @_endtime)),
+                                ' seconds)'
+                            );
+            END;
+
+            -- Log executed action and its duration
+            RAISERROR (@sql, 10, 1) WITH NOWAIT;
+
+            -- Remove processed heap from working table
+            IF @DryRun = 0
+            BEGIN
+                DELETE FROM dbo.FragmentedHeaps
+                WHERE object_id = @object_id;
+
+                RAISERROR ('Removing heap from working table', 10, 1) WITH NOWAIT;
+            END;
+        END;
+
+        CLOSE worklist;
+        DEALLOCATE worklist;
+    END;
 
     -- Delete working table when no rows present
     IF @DryRun = 0
@@ -344,7 +386,6 @@ BEGIN
 
     RAISERROR (@EmptyLine, 10, 1) WITH NOWAIT;
 
-    IF @ReturnCode <> 0
-        RETURN @ReturnCode;
+    IF @ReturnCode <> 0 RETURN @ReturnCode;
 
 END;
