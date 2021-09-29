@@ -204,16 +204,19 @@ BEGIN
 
                 -- Log tablename
                 SET @msg = CONCAT (
-                               'Added table [',
+								FORMAT(getdate(),'yyyy-MM-dd HH:mm:ss'),
+								': ',
+                               'processed table [',
                                @schema_name,
                                '].[',
                                @table_name,
-                               '] to worklist (',
+                               '] (',
                                @i,
                                ' of ',
                                @@CURSOR_ROWS,
                                ')'
                            );
+
                 RAISERROR (@msg, 10, 1) WITH NOWAIT;
             END;
 
@@ -278,7 +281,7 @@ BEGIN
         SET @msg = CONCAT (
 					   FORMAT(getdate(),'yyyy-MM-dd HH:mm:ss'),
 					   ': ', 
-                       'Rebuilding [',
+                       'rebuilding [',
                        @db_name,
                        '].[',
                        @schema_name,
@@ -306,7 +309,7 @@ BEGIN
 
 			-- Determine duration
 			SET @sql += CONCAT (
-					   ' (', 
+					   ' (executed in ', 
                        CONVERT(VARCHAR(5), DATEDIFF(MINUTE, @_starttime, @_endtime)),
 					   ' minutes)'
                    );
