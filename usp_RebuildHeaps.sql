@@ -78,6 +78,7 @@ BEGIN
             @table_name             sysname,
             @page_count             BIGINT,
             @record_count           BIGINT,
+            @_index_count           INT,
             @i                      INT           = 0,
             @forwarded_record_count BIGINT,
             @_maxdop                INT,
@@ -91,6 +92,10 @@ BEGIN
             @Error                  INT           = 0,
             @ReturnCode             INT           = 0;
 
+    -------------------------------------------------------------------------------
+    -- Some basic validation
+    -------------------------------------------------------------------------------
+
     IF @DatabaseName IS NULL
     BEGIN
         SET @ErrorMessage = N'The @DatabaseName parameter must be specified and cannot be NULL. Stopping execution...';
@@ -99,14 +104,32 @@ BEGIN
         RAISERROR (@EmptyLine, 10, 1) WITH NOWAIT;
     END;
 
-    SELECT @edition = CAST(SERVERPROPERTY ('Edition') AS NVARCHAR(100));
-    IF @edition LIKE 'Enterprise%' SET @is_enterprise = 1;
+    IF @SchemaName IS NOT NULL
+       AND @TableName IS NULL
+    BEGIN
+        SET @ErrorMessage = N'The @TableName parameter must be specified when @SchemaName is supplied. Stopping execution...';
+        RAISERROR ('%s', 16, 1, @ErrorMessage) WITH NOWAIT;
+        SET @Error = @@ERROR;
+        RAISERROR (@EmptyLine, 10, 1) WITH NOWAIT;
+    END;
+
+    IF @SchemaName IS NULL
+       AND @TableName IS NOT NULL
+    BEGIN
+        SET @ErrorMessage = N'The @SchemaName parameter must be specified when @TableName is supplied. Stopping execution...';
+        RAISERROR ('%s', 16, 1, @ErrorMessage) WITH NOWAIT;
+        SET @Error = @@ERROR;
+        RAISERROR (@EmptyLine, 10, 1) WITH NOWAIT;
+    END;
 
     IF @Error <> 0
     BEGIN
         SET @ReturnCode = @Error;
         GOTO Logging;
     END;
+
+    SELECT @edition = CAST(SERVERPROPERTY ('Edition') AS NVARCHAR(100));
+    IF @edition LIKE 'Enterprise%' SET @is_enterprise = 1;
 
     -- If working table should be rebuilt, drop it
     IF OBJECT_ID (N'FragmentedHeaps', N'U') IS NOT NULL
@@ -130,7 +153,8 @@ BEGIN
             table_name             sysname NOT NULL,
             page_count             BIGINT  NOT NULL,
             record_count           BIGINT  NOT NULL,
-            forwarded_record_count BIGINT  NOT NULL
+            forwarded_record_count BIGINT  NOT NULL,
+            index_count            INT     NOT NULL
         );
 
         DECLARE heapdb CURSOR STATIC FOR
@@ -182,18 +206,25 @@ BEGIN
                 SET @schema_name = OBJECT_SCHEMA_NAME (@object_id, @db_id);
                 SET @table_name = OBJECT_NAME (@object_id, @db_id);
 
+				SET @sql = N'SELECT @_index_count = COUNT(*) FROM ' + QUOTENAME (@db_name) + N'.sys.indexes 
+					WHERE is_hypothetical = 0 AND index_id <> 0 AND object_id = ' + CONVERT(NVARCHAR(10), @object_id) + ';';
+	
+				EXEC sys.sp_executesql @Sql, N'@_index_count INT OUTPUT', @_index_count OUTPUT;
+
                 INSERT INTO dbo.FragmentedHeaps (object_id,
                                                  schema_name,
                                                  table_name,
                                                  page_count,
                                                  record_count,
-                                                 forwarded_record_count)
+                                                 forwarded_record_count,
+                                                 index_count)
                 SELECT P.object_id,
                        @schema_name,
                        @table_name,
                        P.page_count,
                        P.record_count,
-                       P.forwarded_record_count
+                       P.forwarded_record_count,
+                       @_index_count
                 FROM sys.dm_db_index_physical_stats (DB_ID (@db_name), @object_id, 0, NULL, 'DETAILED') AS P
                 WHERE P.page_count > @MinNumberOfPages
                       AND P.forwarded_record_count > 0;
@@ -267,8 +298,8 @@ BEGIN
                             CONVERT (VARCHAR(5), DATEDIFF (SECOND, @_starttime, @_endtime)),
                             ' seconds)'
                         );
-			
-			-- Remove this table from the working table
+
+            -- Remove this table from the working table
             DELETE FROM dbo.FragmentedHeaps
             WHERE schema_name = @SchemaName
                   AND table_name = @TableName;
@@ -287,7 +318,8 @@ BEGIN
         SELECT TOP (@ProcessHeapCount) object_id,
                                        page_count,
                                        record_count,
-                                       forwarded_record_count
+                                       forwarded_record_count,
+									   index_count
         FROM dbo.FragmentedHeaps
         WHERE 1 = 1
               AND ((@MaxRowCount IS NULL) OR (record_count <= @MaxRowCount))
@@ -301,7 +333,8 @@ BEGIN
             INTO @object_id,
                  @page_count,
                  @record_count,
-                 @forwarded_record_count;
+                 @forwarded_record_count,
+				 @_index_count;
 
             IF @@FETCH_STATUS <> 0 BREAK;
 
