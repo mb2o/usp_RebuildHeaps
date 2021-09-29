@@ -24,6 +24,10 @@
                     of your system. Also be aware that your logshipping processes can be greatly
                     affected by rebuilding heaps as all changes need to be replicated.
 					
+					@MaxIndexCount specifies the max number of nonclustered indexes a heap is allowed 
+					to have in order for it to be rebuilt. Rebuilding heaps with many indexes generates 
+					a lot of transaction log, which can have severe performance penalties.
+
 					@MaxRowCount specifies the number of rows that should not be exceeded for heaps
 					you wish to rebuild.
 					
@@ -61,6 +65,7 @@ CREATE PROC dbo.usp_RebuildHeaps @DatabaseName     NVARCHAR(100),
                                  @TableName        NVARCHAR(100) = NULL,
                                  @MinNumberOfPages INT           = 0,
                                  @ProcessHeapCount INT           = 2,
+								 @MaxIndexCount	   INT			 = 64,
                                  @MaxRowCount      BIGINT        = NULL,
                                  @MaxDOP           INT           = NULL,
                                  @RebuildTable     BIT           = 0,
@@ -323,6 +328,7 @@ BEGIN
         FROM dbo.FragmentedHeaps
         WHERE 1 = 1
               AND ((@MaxRowCount IS NULL) OR (record_count <= @MaxRowCount))
+			  AND index_count <= @MaxIndexCount
         ORDER BY forwarded_record_count DESC;
 
         OPEN worklist;
