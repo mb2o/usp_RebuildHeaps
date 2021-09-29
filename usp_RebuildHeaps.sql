@@ -20,9 +20,6 @@
                     of your system. Also be aware that your logshipping processes can be greatly
                     affected by rebuilding heaps as all changes need to be replicated.
 					
-					@RebuildOnlineOnly specifies whether you only want to consider heaps that can
-					be rebuilt online.
-
 					@MaxRowCount specifies the number of rows that should not be exceeded for heaps
 					you wish to rebuild.
 					
@@ -58,9 +55,8 @@ GO
 CREATE PROC dbo.usp_RebuildHeaps @DatabaseName      NVARCHAR(100),
                                  @MinNumberOfPages  INT     = 0,
                                  @ProcessHeapCount  INT     = 2,
-                                 @RebuildOnlineOnly TINYINT = 0,
                                  @MaxRowCount       BIGINT  = NULL,
-								 @MaxDOP            INT     = 1,
+								 @MaxDOP            INT     = NULL,
                                  @RebuildTable      BIT     = 1,
                                  @DryRun            BIT     = 1
 AS
@@ -70,7 +66,6 @@ BEGIN
     DECLARE @db_id                  INT,
             @db_name                sysname       = @DatabaseName,
             @object_id              INT,
-            @rebuild_online         BIT,
             @edition                VARCHAR(100),
             @is_enterprise          BIT,
             @schema_name            sysname,
@@ -99,7 +94,8 @@ BEGIN
     END;
 
     SELECT @edition = CAST(SERVERPROPERTY ('Edition') AS NVARCHAR(100));
-    IF @edition LIKE 'Enterprise%' SET @is_enterprise = 1;
+    IF @edition LIKE 'Enterprise%' 
+		SET @is_enterprise = 1;
 
     IF @Error <> 0
     BEGIN
@@ -129,8 +125,7 @@ BEGIN
             table_name             sysname NOT NULL,
             page_count             BIGINT  NOT NULL,
             record_count           BIGINT  NOT NULL,
-            forwarded_record_count BIGINT  NOT NULL,
-            rebuild_online         BIT     NOT NULL
+            forwarded_record_count BIGINT  NOT NULL
         );
 
         DECLARE heapdb CURSOR STATIC FOR
@@ -153,8 +148,7 @@ BEGIN
             RAISERROR ('Looping through all heaps', 10, 1) WITH NOWAIT;
 
             SET @sql = N'DECLARE heaps CURSOR GLOBAL STATIC FOR
-					SELECT i.object_id,
-						   ISNUMERIC (u.object_id)
+					SELECT i.object_id
 					FROM ' + QUOTENAME (@db_name) + N'.sys.indexes AS i
 					INNER JOIN ' + QUOTENAME (@db_name)
                        + N'.sys.objects AS o
@@ -175,8 +169,7 @@ BEGIN
             WHILE 1 = 1
             BEGIN
                 FETCH NEXT FROM heaps
-                INTO @object_id,
-                     @rebuild_online;
+                INTO @object_id;
 
                 IF @@FETCH_STATUS <> 0 BREAK;
 
@@ -189,15 +182,13 @@ BEGIN
                                                  table_name,
                                                  page_count,
                                                  record_count,
-                                                 forwarded_record_count,
-                                                 rebuild_online)
+                                                 forwarded_record_count)
                 SELECT P.object_id,
                        @schema_name,
                        @table_name,
                        P.page_count,
                        P.record_count,
-                       P.forwarded_record_count,
-                       1 --@rebuild_online
+                       P.forwarded_record_count
                 FROM sys.dm_db_index_physical_stats (DB_ID (@db_name), @object_id, 0, NULL, 'DETAILED') AS P
                 WHERE P.page_count > @MinNumberOfPages
                       AND P.forwarded_record_count > 0;
@@ -237,8 +228,9 @@ BEGIN
 	FROM sys.configurations
 	WHERE name = 'max degree of parallelism';
 
-	-- If supplied value is not a match to the configured instance value, use supplied value
-	IF @MaxDOP <> @_maxdop
+	-- If @MaxDOP has not been specified, use instance value
+	-- Else use specified value
+	IF @MaxDOP IS NOT NULL
 		SET @_maxdop = @MaxDOP;
 	
 	-- Are we dealing with a dry run?
@@ -255,11 +247,9 @@ BEGIN
     SELECT TOP (@ProcessHeapCount) object_id,
                                    page_count,
                                    record_count,
-                                   forwarded_record_count,
-                                   rebuild_online
+                                   forwarded_record_count
     FROM dbo.FragmentedHeaps
     WHERE 1 = 1
-          AND ((@RebuildOnlineOnly = 0) OR (rebuild_online = 1))
           AND ((@MaxRowCount IS NULL) OR (record_count <= @MaxRowCount))
     ORDER BY forwarded_record_count DESC;
 
@@ -271,8 +261,7 @@ BEGIN
         INTO @object_id,
              @page_count,
              @record_count,
-             @forwarded_record_count,
-             @rebuild_online;
+             @forwarded_record_count;
 
         IF @@FETCH_STATUS <> 0 BREAK;
 
@@ -296,7 +285,7 @@ BEGIN
 
 		SET @sql = N'ALTER TABLE ' + QUOTENAME (@db_name) + N'.' + QUOTENAME (@schema_name) + N'.' + QUOTENAME (@table_name) + N' REBUILD'
 
-		IF @rebuild_online = 1 AND @is_enterprise = 1
+		IF @is_enterprise = 1
 			SET @sql += N' WITH (ONLINE = ON, MAXDOP = ' + CONVERT(NVARCHAR(1), @_maxdop) + N')';
 		ELSE
             SET @sql += N' WITH (MAXDOP = ' + CONVERT(NVARCHAR(1), @_maxdop) + N');';
@@ -304,14 +293,14 @@ BEGIN
         IF @DryRun = 0 
 		BEGIN
 		    SET @_starttime = GETDATE();
-			EXECUTE sp_executesql @stmt = @sql;
+			EXECUTE sys.sp_executesql @stmt = @sql;
 			SET @_endtime = GETDATE();
 
 			-- Determine duration
 			SET @sql += CONCAT (
 					   ' (executed in ', 
-                       CONVERT(VARCHAR(5), DATEDIFF(MINUTE, @_starttime, @_endtime)),
-					   ' minutes)'
+                       CONVERT(VARCHAR(5), DATEDIFF(SECOND, @_starttime, @_endtime)),
+					   ' seconds)'
                    );
 		END
 
