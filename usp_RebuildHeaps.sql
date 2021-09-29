@@ -66,8 +66,6 @@ CREATE PROC dbo.usp_RebuildHeaps @DatabaseName      NVARCHAR(100),
 AS
 BEGIN
     SET NOCOUNT ON;
-    SET ARITHABORT ON;
-    SET NUMERIC_ROUNDABORT OFF;
 
     DECLARE @db_id                  INT,
             @db_name                sysname       = @DatabaseName,
@@ -79,11 +77,13 @@ BEGIN
             @table_name             sysname,
             @page_count             BIGINT,
             @record_count           BIGINT,
-            @heap_count             INT,
             @i                      INT           = 0,
             @forwarded_record_count BIGINT,
+			@_maxdop				INT,
             @sql                    NVARCHAR(MAX),
             @msg                    NVARCHAR(MAX),
+			@_starttime				DATETIME,
+			@_endtime				DATETIME,
             @EndMessage             NVARCHAR(MAX),
             @ErrorMessage           NVARCHAR(MAX),
             @EmptyLine              NVARCHAR(MAX) = CHAR (9),
@@ -197,7 +197,7 @@ BEGIN
                        P.page_count,
                        P.record_count,
                        P.forwarded_record_count,
-                       @rebuild_online
+                       1 --@rebuild_online
                 FROM sys.dm_db_index_physical_stats (DB_ID (@db_name), @object_id, 0, NULL, 'DETAILED') AS P
                 WHERE P.page_count > @MinNumberOfPages
                       AND P.forwarded_record_count > 0;
@@ -229,6 +229,16 @@ BEGIN
     -- Starting actual hard work
     -------------------------------------------------------------------------------
 
+	-- Determine configured instance value for MaxDOP
+	SELECT @_maxdop = CONVERT(INT, value_in_use)
+	FROM sys.configurations
+	WHERE name = 'max degree of parallelism';
+
+	-- If supplied value is not a match to the configured instance value, use supplied value
+	IF @MaxDOP <> @_maxdop
+		SET @_maxdop = @MaxDOP;
+	
+	-- Are we dealing with a dry run?
     IF @DryRun = 1
         RAISERROR ('Performing a dry run. Nothing will be executed ...', 10, 1) WITH NOWAIT;
 
@@ -266,6 +276,8 @@ BEGIN
         SET @schema_name = OBJECT_SCHEMA_NAME (@object_id, @db_id);
         SET @table_name = OBJECT_NAME (@object_id, @db_id);
         SET @msg = CONCAT (
+					   FORMAT(getdate(),'yyyy-MM-dd HH:mm:ss'),
+					   ': ', 
                        'Rebuilding [',
                        @db_name,
                        '].[',
@@ -279,14 +291,28 @@ BEGIN
 
         RAISERROR (@msg, 10, 1) WITH NOWAIT;
 
-        SET @sql = N'ALTER TABLE ' + QUOTENAME (@db_name) + N'.' + QUOTENAME (@schema_name) + N'.'
-                   + QUOTENAME (@table_name) + N' REBUILD WITH (MAXDOP = ' + @MaxDOP + N')';
+		SET @sql = N'ALTER TABLE ' + QUOTENAME (@db_name) + N'.' + QUOTENAME (@schema_name) + N'.' + QUOTENAME (@table_name) + N' REBUILD'
 
-        IF @rebuild_online = 1 AND @is_enterprise = 1
-            SET @sql += N' WITH (ONLINE = ON, MAXDOP = ' + @MaxDOP + N');';
+		IF @rebuild_online = 1 AND @is_enterprise = 1
+			SET @sql += N' WITH (ONLINE = ON, MAXDOP = ' + CONVERT(NVARCHAR(1), @_maxdop) + N')';
+		ELSE
+            SET @sql += N' WITH (MAXDOP = ' + CONVERT(NVARCHAR(1), @_maxdop) + N');';
 
-        IF @DryRun = 0 EXECUTE sp_executesql @stmt = @sql;
+        IF @DryRun = 0 
+		BEGIN
+		    SET @_starttime = GETDATE();
+			EXECUTE sp_executesql @stmt = @sql;
+			SET @_endtime = GETDATE();
 
+			-- Determine duration
+			SET @sql += CONCAT (
+					   ' (', 
+                       CONVERT(VARCHAR(5), DATEDIFF(MINUTE, @_starttime, @_endtime)),
+					   ' minutes)'
+                   );
+		END
+
+		-- Log executed action and its duration
         RAISERROR (@sql, 10, 1) WITH NOWAIT;
 
         -- Remove processed heap from working table
@@ -321,14 +347,12 @@ BEGIN
     ----------------------------------------------------------------------------------------------------
 
     Logging:
-    SET @EndMessage = N'Date and time: ' + CONVERT (NVARCHAR, GETDATE (), 120);
+    SET @EndMessage = N'Date and time: ' + CONVERT (NVARCHAR(20), GETDATE (), 120);
     RAISERROR ('%s', 10, 1, @EndMessage) WITH NOWAIT;
 
     RAISERROR (@EmptyLine, 10, 1) WITH NOWAIT;
 
     IF @ReturnCode <> 0
-    BEGIN
         RETURN @ReturnCode;
-    END;
 
 END;
