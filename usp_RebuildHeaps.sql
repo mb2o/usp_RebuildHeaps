@@ -3,8 +3,8 @@
     NAME:           usp_RebuildHeaps
 
     SYNOPSIS:       A heap is a table without a clustered index. This proc can be used to 
-                    rebuild those heaps on a database. Thereby alleviating the problems that arise 
-                    from large numbers of forwarding records on a heap.
+                    rebuild those heaps on a database, thereby alleviating problems that arise 
+                    from large numbers of forwarded records.
 
     DEPENDENCIES:   .
 
@@ -234,7 +234,6 @@ BEGIN
                 WHERE P.page_count > @MinNumberOfPages
                       AND P.forwarded_record_count > 0;
 
-                -- Log tablename
                 SET @msg = CONCAT (
                                FORMAT (GETDATE (), 'yyyy-MM-dd HH:mm:ss'),
                                ': ',
@@ -264,24 +263,23 @@ BEGIN
     -- Starting actual hard work
     -------------------------------------------------------------------------------
 
+	RAISERROR ('Starting actual hard work', 10, 1) WITH NOWAIT;
+
     -- Determine configured instance value for MaxDOP
     SELECT @_maxdop = CONVERT (INT, value_in_use)
     FROM sys.configurations
     WHERE name = 'max degree of parallelism';
 
     -- If @MaxDOP has not been specified, use instance value
-    -- Else use specified value
-    IF @MaxDOP IS NOT NULL SET @_maxdop = @MaxDOP;
+    IF @MaxDOP IS NOT NULL 
+		SET @_maxdop = @MaxDOP;
 
     -- Are we dealing with a dry run?
     IF @DryRun = 1
         RAISERROR ('Performing a dry run. Nothing will be executed ...', 10, 1) WITH NOWAIT;
 
-    RAISERROR ('Starting actual hard work', 10, 1) WITH NOWAIT;
-
-    -- Are we dealing with a targeted rebuild?
-    IF @SchemaName IS NOT NULL
-       AND @TableName IS NOT NULL
+    -- Targeted rebuild?
+    IF @SchemaName IS NOT NULL AND @TableName IS NOT NULL
     BEGIN
         SET @sql = N'ALTER TABLE ' + QUOTENAME (@db_name) + N'.' + QUOTENAME (@SchemaName) + N'.'
                    + QUOTENAME (@TableName) + N' REBUILD';
@@ -313,7 +311,7 @@ BEGIN
         -- Log executed action and its duration
         RAISERROR (@sql, 10, 1) WITH NOWAIT;
     END;
-    ELSE -- We are not dealing with a targeted rebuild, so start working with the FragmentedHeaps table
+    ELSE
     BEGIN
         SELECT @db_id = d.database_id
         FROM sys.databases AS d
