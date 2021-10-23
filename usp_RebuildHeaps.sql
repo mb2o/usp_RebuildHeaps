@@ -39,7 +39,8 @@
                     @DryRun specifies whether the actual query should be executed or just 
                     printed to the screen.
 	
-	NOTES:			
+	NOTES:          When the working table is first created, execution ends. This leaves time for manipulation of
+                    the working table before actually doing the REBUILD.
 
     AUTHOR:         Mark Boomaars, http://www.bravisziekenhuis.nl
     
@@ -257,6 +258,9 @@ BEGIN
 
         CLOSE heapdb;
         DEALLOCATE heapdb;
+
+        -- End execution when table has been rebuilt
+        GOTO Logging;
     END;
 
     -------------------------------------------------------------------------------
