@@ -12,12 +12,12 @@
                     @DatabaseName specifies on which database the heaps should be rebuilt.
                     
                     Optional:
-                    @SchemaName specifies the schema of a specific table you want to target
+                    @SchemaName specifies the schema of a specific table you want to target.
 
-					@TableName specifies the name of a specific table you want to target
+					@TableName specifies the name of a specific table you want to target.
 					
-					@MinNumberOfPages specifies the minimum number of pages required on the heap
-                    to be taken into account
+					@MinNumberOfPages specifies. the minimum number of pages required on the heap
+                    to be taken into account.
 
                     @ProcessHeapCount specifies the number of heaps that should be rebuilt. 
                     Processing large heaps can have a negative effect on the performance
@@ -29,9 +29,9 @@
 					a lot of transaction log, which can have severe performance penalties.
 
 					@MaxRowCount specifies the number of rows that should not be exceeded for heaps
-					you wish to rebuild.
+					to be rebuilt.
 					
-					@MaxDOP specifies maximum degree of paralellism
+					@MaxDOP specifies maximum degree of paralellism.
 
                     @RebuildTable should be set to 1 when the worktable has to be rebuilt,
 					e.g. after an update to the stored procedure when fields have changed.
@@ -39,7 +39,8 @@
                     @DryRun specifies whether the actual query should be executed or just 
                     printed to the screen.
 	
-	NOTES:			
+	NOTES:          When the working table is first created, execution ends. This leaves time for manipulation of
+                    the working table before actually doing the REBUILDs.
 
     AUTHOR:         Mark Boomaars, http://www.bravisziekenhuis.nl
     
@@ -257,6 +258,9 @@ BEGIN
 
         CLOSE heapdb;
         DEALLOCATE heapdb;
+
+        -- End execution when table has been rebuilt
+        GOTO Logging;
     END;
 
     -------------------------------------------------------------------------------
