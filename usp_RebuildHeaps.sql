@@ -35,12 +35,14 @@
 
                     @RebuildTable should be set to 1 when the worktable has to be rebuilt,
 					e.g. after an update to the stored procedure when fields have changed.
-
+					
+					@QuitAfterBuild should be set to 1 when you need to manipulate the working table
+					before starting the actual table rebuilds.
+					
                     @DryRun specifies whether the actual query should be executed or just 
                     printed to the screen.
 	
-	NOTES:          When the working table is first created, execution ends. This leaves time for manipulation of
-                    the working table before actually doing the REBUILDs.
+	NOTES:          
 
     AUTHOR:         Mark Boomaars, http://www.bravisziekenhuis.nl
     
@@ -52,7 +54,7 @@
     
     USAGE:          EXEC dbo.usp_RebuildHeaps
                         @DatabaseName = 'StackOverflow',
-						@MaxDOP = 2,
+						@MaxDOP = 4,
 						@DryRun = 0;
 
 *********************************************************************************************************/
@@ -65,16 +67,21 @@ CREATE PROC dbo.usp_RebuildHeaps @DatabaseName     NVARCHAR(100),
                                  @SchemaName       NVARCHAR(100) = NULL,
                                  @TableName        NVARCHAR(100) = NULL,
                                  @MinNumberOfPages INT           = 0,
-                                 @ProcessHeapCount INT           = 2,
+                                 @ProcessHeapCount INT           = 3,
 								 @MaxIndexCount	   INT			 = 64,
                                  @MaxRowCount      BIGINT        = NULL,
                                  @MaxDOP           INT           = NULL,
                                  @RebuildTable     BIT           = 0,
-                                 @DryRun           BIT           = 1
+								 @QuitAfterBuild   BIT           = 0,
+                                 @DryRun           BIT           = 0
 AS
 BEGIN
     SET NOCOUNT ON;
 
+    -------------------------------------------------------------------------------
+    -- Declare some internal variables
+    -------------------------------------------------------------------------------
+	
     DECLARE @db_id                  INT,
             @db_name                sysname       = @DatabaseName,
             @object_id              INT,
@@ -259,8 +266,9 @@ BEGIN
         CLOSE heapdb;
         DEALLOCATE heapdb;
 
-        -- End execution when table has been rebuilt
-        GOTO Logging;
+        -- End execution when @QuitAfterBuild = 1
+        IF @QuitAfterBuild = 1
+			GOTO Logging;
     END;
 
     -------------------------------------------------------------------------------
