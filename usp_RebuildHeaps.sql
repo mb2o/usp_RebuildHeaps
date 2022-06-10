@@ -21,7 +21,7 @@
 
                     @ProcessHeapCount specifies the number of heaps that should be rebuilt. 
                     Processing large heaps can have a negative effect on the performance
-                    of your system. Also be aware that your logshipping processes can be greatly
+                    of your system. Also be aware that any logshipping processes can be greatly
                     affected by rebuilding heaps as all changes need to be replicated.
 					
 					@MaxIndexCount specifies the max number of nonclustered indexes a heap is allowed 
@@ -30,6 +30,9 @@
 
 					@MaxRowCount specifies the number of rows that should not be exceeded for heaps
 					to be rebuilt.
+
+                    @MinForwardedRecordCount specifies the minimum number of forwarded records a heap
+                    must have before it is rebuilt.
 					
 					@MaxDOP specifies maximum degree of paralellism.
 
@@ -54,8 +57,7 @@
     
     USAGE:          EXEC dbo.usp_RebuildHeaps
                         @DatabaseName = 'StackOverflow',
-						@MaxDOP = 4,
-						@DryRun = 0;
+						@MaxDOP = 4;
 
 *********************************************************************************************************/
 
@@ -70,6 +72,7 @@ CREATE PROC dbo.usp_RebuildHeaps @DatabaseName     NVARCHAR(100),
                                  @ProcessHeapCount INT           = 3,
 								 @MaxIndexCount	   INT			 = 64,
                                  @MaxRowCount      BIGINT        = NULL,
+                                 @MinForwardedRecordCount INT    = NULL,
                                  @MaxDOP           INT           = NULL,
                                  @RebuildTable     BIT           = 0,
 								 @QuitAfterBuild   BIT           = 0,
@@ -338,6 +341,7 @@ BEGIN
         FROM dbo.FragmentedHeaps
         WHERE 1 = 1
               AND ((@MaxRowCount IS NULL) OR (record_count <= @MaxRowCount))
+              AND ((@MinForwardedRecordCount IS NULL) OR (forwarded_record_count >= @MinForwardedRecordCount))
 			  AND index_count <= @MaxIndexCount
         ORDER BY forwarded_record_count DESC;
 
