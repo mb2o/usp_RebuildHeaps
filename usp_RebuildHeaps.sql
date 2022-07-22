@@ -300,9 +300,9 @@ BEGIN
                    + QUOTENAME (@TableName) + N' REBUILD';
 
         IF @is_enterprise = 1
-            SET @sql += N' WITH (ONLINE = ON, MAXDOP = ' + CONVERT (NVARCHAR(1), @_maxdop) + N')';
+            SET @sql += N' WITH (ONLINE = ON, SORT_IN_TEMPDB = ON, MAXDOP = ' + CONVERT (NVARCHAR(1), @_maxdop) + N')';
         ELSE
-            SET @sql += N' WITH (MAXDOP = ' + CONVERT (NVARCHAR(1), @_maxdop) + N');';
+            SET @sql += N' WITH (SORT_IN_TEMPDB = ON, MAXDOP = ' + CONVERT (NVARCHAR(1), @_maxdop) + N');';
 
         IF @DryRun = 0
         BEGIN
@@ -380,9 +380,9 @@ BEGIN
                        + QUOTENAME (@table_name) + N' REBUILD';
 
             IF @is_enterprise = 1
-                SET @sql += N' WITH (ONLINE = ON, MAXDOP = ' + CONVERT (NVARCHAR(1), @_maxdop) + N')';
+                SET @sql += N' WITH (ONLINE = ON, SORT_IN_TEMPDB = ON, MAXDOP = ' + CONVERT (NVARCHAR(1), @_maxdop) + N')';
             ELSE
-                SET @sql += N' WITH (MAXDOP = ' + CONVERT (NVARCHAR(1), @_maxdop) + N');';
+                SET @sql += N' WITH (SORT_IN_TEMPDB = ON, MAXDOP = ' + CONVERT (NVARCHAR(1), @_maxdop) + N');';
 
             IF @DryRun = 0
             BEGIN
