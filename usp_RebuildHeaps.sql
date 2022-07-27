@@ -65,18 +65,18 @@ IF OBJECTPROPERTY (OBJECT_ID ('usp_RebuildHeaps'), 'IsProcedure') = 1
     DROP PROCEDURE dbo.usp_RebuildHeaps;
 GO
 
-CREATE PROC dbo.usp_RebuildHeaps @DatabaseName     NVARCHAR(100),
-                                 @SchemaName       NVARCHAR(100) = NULL,
-                                 @TableName        NVARCHAR(100) = NULL,
-                                 @MinNumberOfPages INT           = 0,
-                                 @ProcessHeapCount INT           = 3,
-								 @MaxIndexCount	   INT			 = 64,
-                                 @MaxRowCount      BIGINT        = NULL,
-                                 @MinForwardedRecordCount INT    = NULL,
-                                 @MaxDOP           INT           = NULL,
-                                 @RebuildTable     BIT           = 0,
-								 @QuitAfterBuild   BIT           = 0,
-                                 @DryRun           BIT           = 0
+CREATE PROC dbo.usp_RebuildHeaps @DatabaseName              NVARCHAR(100),
+                                 @SchemaName                NVARCHAR(100)   = NULL,
+                                 @TableName                 NVARCHAR(100)   = NULL,
+                                 @MinNumberOfPages          INT             = 0,
+                                 @ProcessHeapCount          INT             = 3,
+								 @MaxIndexCount	            INT			    = 64,
+                                 @MaxRowCount               BIGINT          = NULL,
+                                 @MinForwardedRecordCount   INT             = NULL,
+                                 @MaxDOP                    INT             = NULL,
+                                 @RebuildTable              BIT             = 0,
+								 @QuitAfterBuild            BIT             = 0,
+                                 @DryRun                    BIT             = 0
 AS
 BEGIN
     SET NOCOUNT ON;
