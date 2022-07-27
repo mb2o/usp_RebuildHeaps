@@ -21,7 +21,7 @@
 
                     @ProcessHeapCount specifies the number of heaps that should be rebuilt. 
                     Processing large heaps can have a negative effect on the performance
-                    of your system. Also be aware that your logshipping processes can be greatly
+                    of your system. Also be aware that any logshipping processes can be greatly
                     affected by rebuilding heaps as all changes need to be replicated.
 					
 					@MaxIndexCount specifies the max number of nonclustered indexes a heap is allowed 
@@ -30,17 +30,22 @@
 
 					@MaxRowCount specifies the number of rows that should not be exceeded for heaps
 					to be rebuilt.
+
+                    @MinForwardedRecordCount specifies the minimum number of forwarded records a heap
+                    must have before it is rebuilt.
 					
 					@MaxDOP specifies maximum degree of paralellism.
 
                     @RebuildTable should be set to 1 when the worktable has to be rebuilt,
 					e.g. after an update to the stored procedure when fields have changed.
-
+					
+					@QuitAfterBuild should be set to 1 when you need to manipulate the working table
+					before starting the actual table rebuilds.
+					
                     @DryRun specifies whether the actual query should be executed or just 
                     printed to the screen.
 	
-	NOTES:          When the working table is first created, execution ends. This leaves time for manipulation of
-                    the working table before actually doing the REBUILDs.
+	NOTES:          
 
     AUTHOR:         Mark Boomaars, http://www.bravisziekenhuis.nl
     
@@ -52,8 +57,7 @@
     
     USAGE:          EXEC dbo.usp_RebuildHeaps
                         @DatabaseName = 'StackOverflow',
-						@MaxDOP = 2,
-						@DryRun = 0;
+						@MaxDOP = 4;
 
 *********************************************************************************************************/
 
@@ -61,20 +65,26 @@ IF OBJECTPROPERTY (OBJECT_ID ('usp_RebuildHeaps'), 'IsProcedure') = 1
     DROP PROCEDURE dbo.usp_RebuildHeaps;
 GO
 
-CREATE PROC dbo.usp_RebuildHeaps @DatabaseName     NVARCHAR(100),
-                                 @SchemaName       NVARCHAR(100) = NULL,
-                                 @TableName        NVARCHAR(100) = NULL,
-                                 @MinNumberOfPages INT           = 0,
-                                 @ProcessHeapCount INT           = 2,
-								 @MaxIndexCount	   INT			 = 64,
-                                 @MaxRowCount      BIGINT        = NULL,
-                                 @MaxDOP           INT           = NULL,
-                                 @RebuildTable     BIT           = 0,
-                                 @DryRun           BIT           = 1
+CREATE PROC dbo.usp_RebuildHeaps @DatabaseName              NVARCHAR(100),
+                                 @SchemaName                NVARCHAR(100)   = NULL,
+                                 @TableName                 NVARCHAR(100)   = NULL,
+                                 @MinNumberOfPages          INT             = 0,
+                                 @ProcessHeapCount          INT             = 3,
+								 @MaxIndexCount	            INT			    = 64,
+                                 @MaxRowCount               BIGINT          = NULL,
+                                 @MinForwardedRecordCount   INT             = NULL,
+                                 @MaxDOP                    INT             = NULL,
+                                 @RebuildTable              BIT             = 0,
+								 @QuitAfterBuild            BIT             = 0,
+                                 @DryRun                    BIT             = 0
 AS
 BEGIN
     SET NOCOUNT ON;
 
+    -------------------------------------------------------------------------------
+    -- Declare some internal variables
+    -------------------------------------------------------------------------------
+	
     DECLARE @db_id                  INT,
             @db_name                sysname       = @DatabaseName,
             @object_id              INT,
@@ -259,8 +269,9 @@ BEGIN
         CLOSE heapdb;
         DEALLOCATE heapdb;
 
-        -- End execution when table has been rebuilt
-        GOTO Logging;
+        -- End execution when @QuitAfterBuild = 1
+        IF @QuitAfterBuild = 1
+			GOTO Logging;
     END;
 
     -------------------------------------------------------------------------------
@@ -330,6 +341,7 @@ BEGIN
         FROM dbo.FragmentedHeaps
         WHERE 1 = 1
               AND ((@MaxRowCount IS NULL) OR (record_count <= @MaxRowCount))
+              AND ((@MinForwardedRecordCount IS NULL) OR (forwarded_record_count >= @MinForwardedRecordCount))
 			  AND index_count <= @MaxIndexCount
         ORDER BY forwarded_record_count DESC;
 
